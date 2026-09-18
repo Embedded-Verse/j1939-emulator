@@ -1,0 +1,40 @@
+# --- Public repo (tracked) ---
+# Source: j1939_emulator/
+# Examples / sample config: examples/
+# Docs: README.md, LICENSE, pyproject.toml, .gitignore
+
+# --- Internal only (keep locally, never publish) ---
+ImplementationPlan/
+.cursor/
+tests/
+ScrappedPythonCanDoc/
+temp_test_dir/
+
+# --- Disposable / local ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.pytest_cache/
+pytest-cache-files-*/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+.venv-fresh-test/
+.venv-readme-test/
+venv/
+env/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+*.log

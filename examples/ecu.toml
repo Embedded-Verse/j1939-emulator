@@ -1,0 +1,54 @@
+[bus]
+mode = "virtual"          # "real" | "virtual"
+channel = "vcan0"
+bitrate = 500000
+start_on_launch = true
+
+[ecu]
+source_address = 0x00
+industry_group = 0
+vehicle_system = 0
+name = 0x0020000000000000
+
+[vehicle]
+vin = "1HTMMAAL7GH123456"
+
+[diagnostics]
+dtc_spn110_fmi3 = false
+dtc_spn190_fmi0 = false
+
+[pgn.eec1]
+enabled = true
+cycle_ms = 20
+spn190_rpm = 1250
+spn513_torque_pct = 48
+spn512_demand_torque_pct = 50
+spn899_starter_mode = 3   # 0,2,3,4
+
+[pgn.ccvs]
+enabled = true
+cycle_ms = 100
+spn84_speed_mph = 58.4
+spn595_cruise = true
+spn597_brake = false
+spn598_clutch = false
+
+[pgn.fuel]
+enabled = true
+cycle_ms = 100
+spn183_fuel_rate_gal_h = 7.8
+spn184_economy_mpg = 7.48
+spn91_throttle_pct = 42
+
+[pgn.et1]
+enabled = true
+cycle_ms = 1000
+spn110_coolant_c = 89
+spn175_oil_c = 98
+spn174_fuel_c = 34
+
+[pgn.vd]
+enabled = true
+cycle_ms = 1000
+spn917_total_mi = 248912.4
+spn918_trip_mi = 418.6
