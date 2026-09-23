@@ -12,6 +12,7 @@ from j1939_emulator.bus.detect import (
     EmulationMode,
     detect_hardware,
     find_channel,
+    resolve_channel,
 )
 from j1939_emulator.bus.session import EmulatorSession
 from j1939_emulator.config import load_config
@@ -369,9 +370,24 @@ def run_cli(args: argparse.Namespace) -> int:
                 print(f"ok bitrate={bitrate} (applies on next start/reset if stopped)")
                 if session.running:
                     try:
-                        session.reset(channel, bitrate=bitrate)
+                        session.stop()
+                        session.start(channel, bitrate=bitrate)
                         print("RESET")
                     except Exception as exc:
+                        session.stop()
+                        chs = detect_hardware(mode=mode, timeout=6.0)
+                        retry = resolve_channel(chs, uid=channel.uid, previous=channel)
+                        if retry is not None:
+                            channel = retry
+                            channel_name = channel.uid
+                            try:
+                                session.start(channel, bitrate=bitrate)
+                                print(f"RESET (after refresh → {channel.label!r})")
+                                continue
+                            except Exception as exc2:
+                                session.stop()
+                                print(f"error: {exc2}")
+                                continue
                         print(f"error: {exc}")
                 continue
             if cmd == "info":
@@ -469,14 +485,40 @@ def run_cli(args: argparse.Namespace) -> int:
                     session.start(channel, bitrate=bitrate)
                     print("STARTED")
                 except Exception as exc:
-                    print(f"error: {exc}")
+                    session.stop()
+                    chs = detect_hardware(mode=mode, timeout=6.0)
+                    retry = resolve_channel(chs, uid=channel.uid, previous=channel)
+                    if retry is None:
+                        print(f"error: {exc}")
+                        continue
+                    channel = retry
+                    channel_name = channel.uid
+                    try:
+                        session.start(channel, bitrate=bitrate)
+                        print(f"STARTED (after refresh → {channel.label!r})")
+                    except Exception as exc2:
+                        session.stop()
+                        print(f"error: {exc2}")
                 continue
             if cmd == "reset":
                 try:
                     session.reset(channel, bitrate=bitrate)
                     print("RESET")
                 except Exception as exc:
-                    print(f"error: {exc}")
+                    session.stop()
+                    chs = detect_hardware(mode=mode, timeout=6.0)
+                    retry = resolve_channel(chs, uid=channel.uid, previous=channel)
+                    if retry is None:
+                        print(f"error: {exc}")
+                        continue
+                    channel = retry
+                    channel_name = channel.uid
+                    try:
+                        session.start(channel, bitrate=bitrate)
+                        print(f"RESET (after refresh → {channel.label!r})")
+                    except Exception as exc2:
+                        session.stop()
+                        print(f"error: {exc2}")
                 continue
             if cmd == "set":
                 if len(rest) < 2:

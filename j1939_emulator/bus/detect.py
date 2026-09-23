@@ -243,6 +243,39 @@ def detect_hardware(
     return detect_real_hardware(timeout=timeout)
 
 
+def resolve_channel(
+    channels: list[DetectedChannel],
+    *,
+    uid: str | None = None,
+    previous: DetectedChannel | None = None,
+) -> DetectedChannel | None:
+    """Pick a channel from a fresh discovery list (uid → previous match → first)."""
+    if not channels:
+        return None
+    if uid:
+        for ch in channels:
+            if ch.uid == uid:
+                return ch
+    if previous is not None:
+        for ch in channels:
+            if ch.uid == previous.uid:
+                return ch
+        for ch in channels:
+            if (
+                ch.interface == previous.interface
+                and ch.bus_kwargs.get("channel") == previous.bus_kwargs.get("channel")
+            ):
+                return ch
+        for ch in channels:
+            if ch.interface == previous.interface and ch.label == previous.label:
+                return ch
+        if previous.interface in ("candle", "gs_usb"):
+            for ch in channels:
+                if ch.interface in ("candle", "gs_usb"):
+                    return ch
+    return channels[0]
+
+
 def find_channel(
     mode: EmulationMode | str,
     channel: str,

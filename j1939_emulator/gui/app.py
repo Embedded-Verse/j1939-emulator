@@ -10,7 +10,12 @@ from typing import Any
 
 from nicegui import app, ui
 
-from j1939_emulator.bus.detect import DetectedChannel, EmulationMode, detect_hardware
+from j1939_emulator.bus.detect import (
+    DetectedChannel,
+    EmulationMode,
+    detect_hardware,
+    resolve_channel,
+)
 from j1939_emulator.bus.session import EmulatorSession
 from j1939_emulator.config import load_config
 from j1939_emulator.gui.styles import APP_CSS
@@ -192,7 +197,7 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
                 ui.label("J").classes("brand-icon")
                 ui.label("SAE J1939 Heavy-Duty Vehicle Emulator").classes("brand-title")
                 ui.label("v1.0").classes("badge-subtle font-mono")
-            with ui.row().classes("items-center gap-3 flex-wrap"):
+            with ui.element("div").classes("topbar-controls"):
                 top_pill = ui.element("span").classes("status-pill stopped font-mono")
                 with top_pill:
                     ui.element("span").classes("status-dot")
@@ -200,12 +205,12 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
                 port_badge = ui.label(f"PORT :{state.port} READY").classes(
                     "badge-subtle font-mono"
                 ).style("background:#F8FAFC; color:#5B6775; border-color:#CBD5E1;")
-                with ui.row().classes("items-center gap-1"):
+                with ui.row().classes("items-center gap-1").style("flex-shrink:0;"):
                     ui.label("Host").classes("field-label").style("margin:0;")
                     host_input = (
                         ui.input(value=state.host)
                         .props("dense outlined")
-                        .style("width:120px")
+                        .style("width:120px;min-width:100px;")
                         .classes("font-mono")
                     )
                     ui.label("Port").classes("field-label").style("margin:0;")
@@ -214,7 +219,7 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
                             value=state.port, min=1, max=65535, step=1, format="%.0f"
                         )
                         .props("dense outlined")
-                        .style("width:90px")
+                        .style("width:90px;min-width:72px;")
                         .classes("font-mono")
                     )
                     btn_apply_port = ui.button("Apply").props("flat dense")
@@ -342,7 +347,10 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
                 state.ui_refs["foot_dtc"] = foot_dtc
                 ui.label("SAE J1939 v1.0").style("color:#1F9D55;font-weight:700;")
 
-    def refresh_channels() -> None:
+    def refresh_channels(*, prefer: DetectedChannel | None = None) -> DetectedChannel | None:
+        prior = prefer
+        if prior is None and state.channel_uid:
+            prior = _selected_channel(state) or session.channel
         state.channels = detect_hardware(mode=state.mode, timeout=6.0)
         options = {ch.uid: ch.label for ch in state.channels}
         channel_select.options = options
@@ -355,10 +363,13 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
                 ):
                     state.channel_uid = ch.uid
                     break
-        if state.channel_uid not in options:
-            state.channel_uid = next(iter(options), None)
+        resolved = resolve_channel(
+            state.channels, uid=state.channel_uid, previous=prior
+        )
+        state.channel_uid = resolved.uid if resolved else None
         channel_select.value = state.channel_uid
         channel_select.update()
+        return resolved
 
     def on_mode_change(e) -> None:
         label = e.value if hasattr(e, "value") else mode_select.value
@@ -369,6 +380,7 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
             session.stop()
             update_chrome()
         state.mode = new_mode
+        state.channel_uid = None
         refresh_channels()
 
     def on_channel_change(e) -> None:
@@ -376,11 +388,50 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
 
     def on_bitrate_change(e) -> None:
         label = e.value if hasattr(e, "value") else bitrate_select.value
-        state.bitrate = BITRATE_OPTIONS.get(label, 500_000)
+        new_br = BITRATE_OPTIONS.get(label, 500_000)
+        state.bitrate = new_br
+        session.bitrate = new_br
         foot_bitrate.set_text(f"{state.bitrate // 1000} kbit/s")
+        if session.running:
+            ch = _selected_channel(state) or session.channel
+            if ch is None:
+                session.stop()
+                update_chrome()
+                ui.notify("Bitrate updated — channel lost; press START", type="warning")
+                return
+            try:
+                # Clean reopen at new bitrate (same channel object; refresh only on fail).
+                session.stop()
+                session.start(ch, bitrate=state.bitrate)
+                update_chrome()
+                ui.notify(f"Bitrate applied — restarted on {ch.label}", type="info")
+            except Exception as exc:
+                session.stop()
+                update_chrome()
+                ch2 = refresh_channels(prefer=ch)
+                if ch2 is not None:
+                    try:
+                        session.start(ch2, bitrate=state.bitrate)
+                        update_chrome()
+                        ui.notify(f"Bitrate applied on {ch2.label}", type="info")
+                        return
+                    except Exception as exc2:
+                        session.stop()
+                        update_chrome()
+                        ui.notify(
+                            f"Bitrate set; START failed: {exc2}. Press Refresh then START.",
+                            type="negative",
+                        )
+                        return
+                ui.notify(
+                    f"Bitrate set; START failed: {exc}. Press Refresh then START.",
+                    type="negative",
+                )
 
     def do_start() -> None:
         ch = _selected_channel(state)
+        if ch is None:
+            ch = refresh_channels()
         if ch is None:
             ui.notify("No channel selected", type="warning")
             return
@@ -388,24 +439,57 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
             session.start(ch, bitrate=state.bitrate)
             update_chrome()
             ui.notify(f"Started on {ch.label}", type="positive")
-        except Exception as exc:
-            ui.notify(f"START failed: {exc}", type="negative")
+            return
+        except Exception as first_exc:
+            session.stop()
+            update_chrome()
+            # Rediscover only after a failed open (USB list right after close is fragile).
+            ch2 = refresh_channels(prefer=ch)
+            if ch2 is None:
+                ui.notify(f"START failed: {first_exc}", type="negative")
+                return
+            try:
+                session.start(ch2, bitrate=state.bitrate)
+                update_chrome()
+                ui.notify(f"Started on {ch2.label} (after refresh)", type="positive")
+            except Exception as exc:
+                session.stop()
+                update_chrome()
+                ui.notify(f"START failed: {exc}", type="negative")
 
     def do_stop() -> None:
         session.stop()
         update_chrome()
+        # Defer rediscovery so candleLight USB handles can settle.
+        ui.timer(0.8, lambda: refresh_channels(prefer=session.channel), once=True)
 
     def do_reset() -> None:
         ch = _selected_channel(state) or session.channel
+        if ch is None:
+            ch = refresh_channels()
         if ch is None:
             ui.notify("No channel selected", type="warning")
             return
         try:
             session.reset(ch, bitrate=state.bitrate)
             update_chrome()
-            ui.notify("RESET", type="info")
-        except Exception as exc:
-            ui.notify(f"RESET failed: {exc}", type="negative")
+            ui.notify("RESET (session restarted)", type="info")
+            return
+        except Exception as first_exc:
+            session.stop()
+            update_chrome()
+            ch2 = refresh_channels(prefer=ch)
+            if ch2 is None:
+                ui.notify(f"RESET failed: {first_exc}", type="negative")
+                return
+            try:
+                session.start(ch2, bitrate=state.bitrate)
+                update_chrome()
+                ui.notify("RESET (after channel refresh)", type="info")
+            except Exception as exc:
+                session.stop()
+                update_chrome()
+                ui.notify(f"RESET failed: {exc}", type="negative")
 
     def do_quit() -> None:
         session.stop()

@@ -409,11 +409,15 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
                             .classes("font-mono")
                             .style("flex:1;font-weight:700;text-transform:uppercase;")
                         )
+                        btn_set_vin = ui.button("Set").classes(
+                            "action-btn btn-start font-mono"
+                        ).props("unelevated dense")
                         btn_copy = ui.button("Copy").classes(
                             "action-btn btn-restart font-mono"
                         ).props("unelevated dense")
                     ui.label(
-                        "Broadcasted on CAN via PGN 65260 (VI) upon startup."
+                        "Broadcast on START and when Set (PGN 65260 / BAM). "
+                        "Not Request/Response."
                     ).style("font-size:11px;color:#5B6775;margin-top:6px;")
                     refs["vin_input"] = vin_input
 
@@ -435,7 +439,7 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
                         except Exception:
                             ui.notify(f"VIN: {text}", type="info")
 
-                    vin_input.on("blur", on_vin_change)
+                    btn_set_vin.on_click(lambda: on_vin_change())
                     btn_copy.on_click(on_copy)
 
             with ui.column().classes("gap-3"):

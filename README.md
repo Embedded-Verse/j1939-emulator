@@ -29,6 +29,8 @@ Hardware on the bench while the emulator runs:
 
 ![j1939-emulator hardware demo](docs/WorkingHardware.gif)
 
+**Full video walkthrough** (install + run): [Watch on YouTube](https://www.youtube.com/watch?v=x52c0_clW10)
+
 ---
 
 ## Hardware Setup
