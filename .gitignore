@@ -1,7 +1,7 @@
 # --- Public repo (tracked) ---
 # Source: j1939_emulator/
 # Examples / sample config: examples/
-# Docs: README.md, LICENSE, pyproject.toml, .gitignore
+# Docs: README.md, LICENSE, pyproject.toml, .gitignore, docs/ (README media)
 
 # --- Internal only (keep locally, never publish) ---
 ImplementationPlan/

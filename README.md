@@ -19,6 +19,28 @@ Built with **python-can**, **can-j1939**, and **NiceGUI**.
 
 ---
 
+## Demo
+
+GUI live on a real CAN adapter (software view):
+
+![j1939-emulator software demo](docs/SoftwareDemo.gif)
+
+Hardware on the bench while the emulator runs:
+
+![j1939-emulator hardware demo](docs/WorkingHardware.gif)
+
+---
+
+## Hardware Setup
+
+One supported CAN adapter is enough to run the emulator. The Vector VN1610 + TSMaster path is optional — used only to verify frames on a shared bus.
+
+![J1939 Emulator hardware connections](docs/HardwareConnections.png)
+
+**Tested on:** CANable / candleLight (slcan / candle), Vector VN1610
+
+---
+
 ## 1. Clone and set up
 
 Run every command from the **repository root** (`j1939-emulator`), not from the inner `j1939_emulator` package folder. That root is where `pyproject.toml` and `examples/` live.
