@@ -20,6 +20,8 @@ Built with **python-can**, **can-j1939**, and **NiceGUI**.
 ---
 
 ## Demo
+**Full video walkthrough** (install + run): [Watch on YouTube](https://www.youtube.com/watch?v=x52c0_clW10)
+
 
 GUI live on a real CAN adapter (software view):
 
