@@ -14,15 +14,32 @@ body, .nicegui-content {
 
 .j1939-root { min-height: 100vh; display: flex; flex-direction: column; background: #E8ECF0; }
 .topbar {
-  height: 48px; background: #FFFFFF; border-bottom: 1px solid #CBD5E1;
-  padding: 0 16px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+  min-height: 48px; height: auto; background: #FFFFFF; border-bottom: 1px solid #CBD5E1;
+  padding: 8px 16px; display: flex; flex-wrap: wrap; align-items: center;
+  justify-content: space-between; gap: 8px 12px; flex-shrink: 0; row-gap: 8px;
 }
-.brand-section { display: flex; align-items: center; gap: 10px; }
+.brand-section {
+  display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto;
+}
 .brand-icon {
   width: 28px; height: 28px; background: #1F6FEB; color: white; border-radius: 3px;
   display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 14px;
+  flex-shrink: 0;
 }
-.brand-title { font-weight: 800; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; color: #1F2A37; }
+.brand-title {
+  font-weight: 800; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase;
+  color: #1F2A37; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.topbar-controls {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  flex: 0 1 auto; justify-content: flex-end;
+}
+@media (max-width: 900px) {
+  .brand-title { max-width: 160px; }
+}
+@media (max-width: 640px) {
+  .brand-title { display: none; }
+}
 .badge-subtle {
   font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 3px;
   background: #E7F0FD; color: #1F6FEB; border: 1px solid #B6D4FE;
