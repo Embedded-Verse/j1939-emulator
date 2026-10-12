@@ -1,4 +1,4 @@
-"""Bus session: START / STOP / RESET, cyclic PGN TX, J1939 claim/VIN/DM1, live stats."""
+"""Bus session: START / STOP / RESET, cyclic PGN TX, J1939 claim/VIN/DM1–DM3, live stats."""
 
 from __future__ import annotations
 
@@ -24,7 +24,15 @@ except Exception:
     pass
 
 from j1939_emulator.bus.detect import DetectedChannel, EmulationMode
-from j1939_emulator.diagnostics import DM1_CYCLE_MS, DiagnosticState
+from j1939_emulator.diagnostics import (
+    PGN_ACKNOWLEDGEMENT,
+    PGN_DM1,
+    PGN_DM2,
+    PGN_DM3,
+    DiagnosticState,
+    encode_dm1,
+    encode_dm2,
+)
 from j1939_emulator.ecu_identity import (
     VI_PDU_FORMAT,
     VI_PDU_SPECIFIC,
@@ -101,6 +109,7 @@ class SessionStats:
     channel_label: str = ""
     sa: int = 0x00
     active_dtcs: int = 0
+    previously_active_dtcs: int = 0
     address_claimed: bool = False
 
 
@@ -272,7 +281,7 @@ class _PgnScheduler(threading.Thread):
 
 @dataclass
 class EmulatorSession:
-    """Single-channel emulation session for v1.0 (1 ECU SA 0x00)."""
+    """Single-channel emulation session (1 ECU SA 0x00) with DM1/DM2/DM3."""
 
     signals: SignalState = field(default_factory=SignalState)
     identity: EcuIdentity = field(default_factory=EcuIdentity)
@@ -285,6 +294,7 @@ class EmulatorSession:
     _ca: ControllerApplication | None = field(default=None, init=False, repr=False)
     _dm1: Dm1 | None = field(default=None, init=False, repr=False)
     _dm1_sending: bool = field(default=False, init=False)
+    _request_subscribed: bool = field(default=False, init=False)
     _scheduler: _PgnScheduler | None = field(default=None, init=False, repr=False)
     _channel: DetectedChannel | None = field(default=None, init=False, repr=False)
     _running: bool = field(default=False, init=False)
@@ -335,6 +345,7 @@ class EmulatorSession:
                 channel_label=label,
                 sa=self.identity.source_address & 0xFF,
                 active_dtcs=self.diagnostics.active_count,
+                previously_active_dtcs=self.diagnostics.previously_active_count,
                 address_claimed=self.address_claimed if self._running else False,
             )
 
@@ -386,12 +397,32 @@ class EmulatorSession:
         with self._lock:
             self._sync_dm1_locked()
 
+    def set_dtc(self, key: str | int, active: bool) -> None:
+        self.diagnostics.set_active(key, active)
+        with self._lock:
+            self._sync_dm1_locked()
+
+    def add_dtc(self, spn: int, fmi: int, oc: int = 0, **kwargs: Any) -> None:
+        self.diagnostics.add_dtc(spn, fmi, oc, **kwargs)
+        with self._lock:
+            self._sync_dm1_locked()
+
     def set_dtcs(self, dtc1: bool | None = None, dtc2: bool | None = None) -> None:
         if dtc1 is not None:
-            self.diagnostics.dtc_spn110_fmi3 = bool(dtc1)
+            self.diagnostics.set_dtc1(bool(dtc1))
         if dtc2 is not None:
-            self.diagnostics.dtc_spn190_fmi0 = bool(dtc2)
-        self.diagnostics.notify()
+            self.diagnostics.set_dtc2(bool(dtc2))
+        with self._lock:
+            self._sync_dm1_locked()
+
+    def clear_active_dtcs(self) -> None:
+        self.diagnostics.clear_active()
+        with self._lock:
+            self._sync_dm1_locked()
+
+    def clear_previously_active_dtcs(self) -> None:
+        """Local DM3 path: clear previously active memory and sync."""
+        self.diagnostics.clear_previously_active()
         with self._lock:
             self._sync_dm1_locked()
 
@@ -404,6 +435,9 @@ class EmulatorSession:
         self.diagnostics.inject_both()
         with self._lock:
             self._sync_dm1_locked()
+
+    def inject_demo_dtcs(self) -> None:
+        self.inject_both_dtcs()
 
     def _bus_kwargs(self, channel: DetectedChannel) -> dict[str, Any]:
         kwargs = dict(channel.bus_kwargs)
@@ -452,6 +486,8 @@ class EmulatorSession:
         self._running = True
         self._dm1 = Dm1(self._ca)
         self._dm1_sending = False
+        self._ca.subscribe_request(self._on_pgn_request)
+        self._request_subscribed = True
         self._start_scheduler_locked()
         self._broadcast_vin_locked()
         self._sync_dm1_locked()
@@ -480,16 +516,82 @@ class EmulatorSession:
         # BAM uses multiple frames; count as one logical TX
         self._on_tx()
 
+    def _send_dm_payload_locked(self, pgn: int, payload: bytes) -> None:
+        """Send DM1/DM2 via CA.send_pgn (BAM when len > 8; prio 7 for TP)."""
+        if self._ca is None:
+            return
+        data = list(payload)
+        priority = 7 if len(data) > 8 else 6
+        self._ca.send_pgn(0, (pgn >> 8) & 0xFF, pgn & 0xFF, priority, data)
+        self._on_tx()
+
+    def _send_acknowledgement_locked(
+        self, dest_address: int, requested_pgn: int, *, positive: bool = True
+    ) -> None:
+        """J1939-21 Acknowledgement (PGN 59392). control 0=ACK, 1=NACK."""
+        if self._ca is None:
+            return
+        control = 0 if positive else 1
+        sa = self.identity.source_address & 0xFF
+        data = [
+            control,
+            0xFF,  # group function N/A
+            0xFF,
+            0xFF,
+            sa,  # address acknowledged
+            requested_pgn & 0xFF,
+            (requested_pgn >> 8) & 0xFF,
+            (requested_pgn >> 16) & 0xFF,
+        ]
+        # PDU1: PF=0xE8, PS=destination (requester)
+        self._ca.send_pgn(
+            0,
+            (PGN_ACKNOWLEDGEMENT >> 8) & 0xFF,
+            dest_address & 0xFF,
+            6,
+            data,
+        )
+        self._on_tx()
+
+    def _on_pgn_request(self, src_address: int, dest_address: int, pgn: int) -> None:
+        """Handle PGN Request for DM1 / DM2 / DM3 (subscribed on CA)."""
+        with self._lock:
+            if not self._running or self._ca is None:
+                return
+            if pgn == PGN_DM1:
+                # Respond with current active list (NA pad when empty) — §5.7.1
+                self._send_dm_payload_locked(
+                    PGN_DM1, encode_dm1(self.diagnostics, empty_as_na=True)
+                )
+            elif pgn == PGN_DM2:
+                self._send_dm_payload_locked(PGN_DM2, encode_dm2(self.diagnostics))
+            elif pgn == PGN_DM3:
+                # Clear previously active only; ACK per §5.7.3
+                self.diagnostics.clear_previously_active()
+                self._send_acknowledgement_locked(src_address, PGN_DM3, positive=True)
+                self._sync_dm1_locked()
+
     def _sync_dm1_locked(self) -> None:
         if not self._running or self._dm1 is None or self._ca is None:
             return
         active = self.diagnostics.active_count > 0
+        cycle_s = max(0.1, float(self.diagnostics.dm1_cycle_ms) / 1000.0)
         if active and not self._dm1_sending:
-            self._dm1.start_send(
-                self.diagnostics.dm1_callback, cycletime=DM1_CYCLE_MS / 1000.0
-            )
+            self._dm1.start_send(self.diagnostics.dm1_callback, cycletime=cycle_s)
             self._dm1_sending = True
+            # Immediate state-change TX (J1939-73: send when DTC becomes active)
+            self._send_dm_payload_locked(PGN_DM1, encode_dm1(self.diagnostics))
+        elif active and self._dm1_sending:
+            # State change while already cyclic — emit updated DM1 immediately
+            self._send_dm_payload_locked(PGN_DM1, encode_dm1(self.diagnostics))
         elif not active and self._dm1_sending:
+            # Transition DM1 (lamps off / empty NA pad), then stop cyclic — §5.7.1
+            try:
+                self._send_dm_payload_locked(
+                    PGN_DM1, encode_dm1(self.diagnostics, empty_as_na=True)
+                )
+            except Exception:
+                pass
             try:
                 self._dm1.stop_send(self._dm1._send)
             except Exception:
@@ -513,7 +615,7 @@ class EmulatorSession:
             finally:
                 self._lock.acquire()
 
-        # 2) Stop DM1 then CA (both use the bus / ECU job thread).
+        # 2) Stop DM1 / request sub then CA (both use the bus / ECU job thread).
         if self._dm1 is not None and self._dm1_sending:
             try:
                 self._dm1.stop_send(self._dm1._send)
@@ -521,6 +623,13 @@ class EmulatorSession:
                 pass
         self._dm1_sending = False
         self._dm1 = None
+
+        if self._ca is not None and self._request_subscribed:
+            try:
+                self._ca.unsubscribe_request(self._on_pgn_request)
+            except Exception:
+                pass
+        self._request_subscribed = False
 
         if self._ca is not None:
             try:

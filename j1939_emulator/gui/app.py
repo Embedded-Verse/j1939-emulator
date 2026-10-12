@@ -196,7 +196,7 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
             with ui.element("div").classes("brand-section"):
                 ui.label("J").classes("brand-icon")
                 ui.label("SAE J1939 Heavy-Duty Vehicle Emulator").classes("brand-title")
-                ui.label("v1.0").classes("badge-subtle font-mono")
+                ui.label("v1.1").classes("badge-subtle font-mono")
             with ui.element("div").classes("topbar-controls"):
                 top_pill = ui.element("span").classes("status-pill stopped font-mono")
                 with top_pill:
@@ -295,8 +295,8 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
                     ui.label("Node 0x00").classes("tab-pill")
                 tab_diag = ui.button().classes("tab-btn").props("flat dense")
                 with tab_diag:
-                    ui.label("Diagnostics (2 DTCs)")
-                    diag_tab_pill = ui.label("2 Supported").classes("tab-pill")
+                    ui.label("Diagnostics (DM1/DM2/DM3)")
+                    diag_tab_pill = ui.label("2 Configured").classes("tab-pill")
                     state.ui_refs["diag_tab_pill"] = diag_tab_pill
 
             pane_signals = ui.element("section")
@@ -345,7 +345,7 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
                 foot_tx = ui.label("TX Broadcast: 0 frames")
                 foot_dtc = ui.label("Active Faults: 0 DTCs").style("color:#1F9D55")
                 state.ui_refs["foot_dtc"] = foot_dtc
-                ui.label("SAE J1939 v1.0").style("color:#1F9D55;font-weight:700;")
+                ui.label("SAE J1939 v1.1").style("color:#1F9D55;font-weight:700;")
 
     def refresh_channels(*, prefer: DetectedChannel | None = None) -> DetectedChannel | None:
         prior = prefer
@@ -582,9 +582,13 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
         foot_bitrate.set_text(f"{st.bitrate // 1000} kbit/s")
         foot_sa.set_text(f"SA: 0x{st.sa:02X}")
         c = st.active_dtcs
+        p = st.previously_active_dtcs
         if c > 0:
             foot_dtc.set_text(f"Active Faults: {c} DTCs")
             foot_dtc.style("color:#B45309")
+        elif p > 0:
+            foot_dtc.set_text(f"Active Faults: 0 DTCs · Prev {p}")
+            foot_dtc.style("color:#1F9D55")
         else:
             foot_dtc.set_text("Active Faults: 0 DTCs")
             foot_dtc.style("color:#1F9D55")
@@ -594,8 +598,15 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
                 pill.set_text(f"{c} Active")
                 pill.classes(add="warn")
             else:
-                pill.set_text("2 Supported")
+                n = len(session.diagnostics.list_dtcs())
+                pill.set_text(f"{n} Configured")
                 pill.classes(remove="warn")
+        refresh_diag = state.ui_refs.get("refresh_dtc_ui")
+        if refresh_diag is not None:
+            try:
+                refresh_diag()
+            except Exception:
+                pass
 
     def refresh_payloads() -> None:
         payloads = all_payloads(sig)

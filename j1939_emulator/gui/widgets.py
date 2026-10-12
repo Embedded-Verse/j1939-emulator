@@ -480,7 +480,7 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
 
 
 def build_diagnostics_pane(session, refs: dict[str, Any]) -> None:
-    """Diagnostics tab — 2 DTCs on DM1."""
+    """Diagnostics tab — configurable DTCs, DM1/DM2/DM3."""
     diag = session.diagnostics
 
     with ui.element("div").classes("card").style(
@@ -490,19 +490,30 @@ def build_diagnostics_pane(session, refs: dict[str, Any]) -> None:
             "border-bottom:1px solid #CBD5E1;padding-bottom:8px;"
         ):
             with ui.column().classes("gap-0"):
-                ui.label("Diagnostics & Active Fault Codes (DM1)").style(
+                ui.label("Diagnostics & Fault Codes").style(
                     "font-size:14px;font-weight:700;text-transform:uppercase;"
                 )
-                ui.label(
-                    "SAE J1939-73 Diagnostic Trouble Code (DTC) Fault Injection & Lamp Status"
-                ).classes("font-mono").style("font-size:11px;color:#5B6775;")
-            with ui.row().classes("gap-2"):
-                btn_clear = ui.button("Clear All").classes(
+                ui.label("SAE J1939-73 · DM1 / DM2 / DM3").classes("font-mono").style(
+                    "font-size:11px;color:#5B6775;"
+                )
+            with ui.row().classes("gap-2").style("flex-wrap:wrap;"):
+                btn_clear_active = ui.button("Clear Active").classes(
                     "action-btn btn-restart font-mono"
                 ).props("unelevated dense")
-                btn_inject = ui.button("Inject Both").classes(
+                btn_clear_prev = ui.button("Clear Previously Active (DM3)").classes(
                     "action-btn btn-restart font-mono"
                 ).props("unelevated dense")
+                btn_inject = ui.button("Inject Demo").classes(
+                    "action-btn btn-restart font-mono"
+                ).props("unelevated dense")
+
+        with ui.row().classes("w-full items-center gap-4 font-mono").style(
+            "font-size:11px;color:#5B6775;"
+        ):
+            count_label = ui.label("Active 0 · Previously active 0")
+            dm1_status = ui.label("DM1 broadcasting: no")
+            refs["diag_counts"] = count_label
+            refs["diag_dm1_status"] = dm1_status
 
         dm1_alert = ui.element("div").classes("font-mono").style(
             "display:none;background:#FFFBEB;border:1px solid #FDE68A;border-radius:3px;"
@@ -513,8 +524,8 @@ def build_diagnostics_pane(session, refs: dict[str, Any]) -> None:
                 "font-weight:700;"
             )
             ui.label(
-                "CAN ID: 0x18FECA00 · Priority: 6 · Rate: 1000 ms. "
-                "Telematics dashboards display MIL indicator."
+                "Cyclic ~1 s while active · also on Request. "
+                "DM2 (65227) on request · DM3 (65228) clears previously active."
             )
         refs["dm1_alert"] = dm1_alert
 
@@ -583,49 +594,76 @@ def build_diagnostics_pane(session, refs: dict[str, Any]) -> None:
 
         def refresh_dtc_ui() -> None:
             c = diag.active_count
+            p = diag.previously_active_count
+            count_label.set_text(f"Active {c} · Previously active {p}")
+            dm1_status.set_text(
+                f"DM1 broadcasting: {'yes' if diag.dm1_broadcasting else 'no'}"
+            )
             dm1_alert.style(
                 "display:block;background:#FFFBEB;border:1px solid #FDE68A;"
                 "border-radius:3px;padding:10px;font-size:11px;color:#92400E;"
                 if c > 0
                 else "display:none;"
             )
-            if diag.dtc_spn110_fmi3:
+            e1 = diag.find(1)
+            e1_active = bool(e1 and e1.status.value == "active")
+            e1_prev = bool(e1 and e1.status.value == "previously_active")
+            if e1_active:
                 card1.classes(remove="fault-red", add="fault-amber")
                 badge1.set_text("FAULT INJECTED")
                 btn1.set_text("Clear Fault")
             else:
                 card1.classes(remove="fault-amber fault-red")
-                badge1.set_text("INACTIVE")
+                badge1.set_text("PREVIOUSLY ACTIVE" if e1_prev else "INACTIVE")
                 btn1.set_text("Inject Fault")
-            if diag.dtc_spn190_fmi0:
+
+            e2 = diag.find(2)
+            e2_active = bool(e2 and e2.status.value == "active")
+            e2_prev = bool(e2 and e2.status.value == "previously_active")
+            if e2_active:
                 card2.classes(remove="fault-amber", add="fault-red")
                 badge2.set_text("FAULT INJECTED")
                 btn2.set_text("Clear Fault")
             else:
                 card2.classes(remove="fault-amber fault-red")
-                badge2.set_text("INACTIVE")
+                badge2.set_text("PREVIOUSLY ACTIVE" if e2_prev else "INACTIVE")
                 btn2.set_text("Inject Fault")
+
             pill = refs.get("diag_tab_pill")
             if pill is not None:
                 if c > 0:
                     pill.set_text(f"{c} Active")
                     pill.classes(add="warn")
                 else:
-                    pill.set_text("2 Supported")
+                    pill.set_text(f"{len(diag.list_dtcs())} Configured")
                     pill.classes(remove="warn")
             foot = refs.get("foot_dtc")
             if foot is not None:
                 if c > 0:
                     foot.set_text(f"Active Faults: {c} DTCs")
                     foot.style("color:#B45309")
+                elif p > 0:
+                    foot.set_text(f"Active Faults: 0 DTCs · Prev {p}")
+                    foot.style("color:#1F9D55")
                 else:
                     foot.set_text("Active Faults: 0 DTCs")
                     foot.style("color:#1F9D55")
 
         refs["refresh_dtc_ui"] = refresh_dtc_ui
 
-        btn1.on_click(lambda: (session.set_dtc1(not diag.dtc_spn110_fmi3), refresh_dtc_ui()))
-        btn2.on_click(lambda: (session.set_dtc2(not diag.dtc_spn190_fmi0), refresh_dtc_ui()))
-        btn_clear.on_click(lambda: (session.clear_all_dtcs(), refresh_dtc_ui()))
-        btn_inject.on_click(lambda: (session.inject_both_dtcs(), refresh_dtc_ui()))
+        btn1.on_click(
+            lambda: (session.set_dtc1(not diag.dtc_spn110_fmi3), refresh_dtc_ui())
+        )
+        btn2.on_click(
+            lambda: (session.set_dtc2(not diag.dtc_spn190_fmi0), refresh_dtc_ui())
+        )
+        btn_clear_active.on_click(
+            lambda: (session.clear_active_dtcs(), refresh_dtc_ui())
+        )
+        btn_clear_prev.on_click(
+            lambda: (session.clear_previously_active_dtcs(), refresh_dtc_ui())
+        )
+        btn_inject.on_click(
+            lambda: (session.inject_demo_dtcs(), refresh_dtc_ui())
+        )
         refresh_dtc_ui()

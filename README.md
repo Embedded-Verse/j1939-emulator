@@ -7,15 +7,17 @@ Built with **python-can**, **can-j1939**, and **NiceGUI**.
 
 **Requirements:** Python **3.11+** · Windows, Linux, or macOS · a browser for the GUI (Chrome, Edge, or Safari)
 
-### What you get (v1.0)
+### What you get (v1.1)
 
 | Area | Capability |
 |------|------------|
 | **Bus** | Real hardware detect or Virtual (`vcan0` / `vcan1` / `vcan2`) · START / STOP / RESET · live TX stats |
 | **Signals** | 5 cyclic PGNs with live SPN controls, payload hex, search, per-PGN `cycle_ms` |
 | **ECU / VIN** | Single node SA `0x00` · J1939-81 address claim · VIN on PGN 65260 (VI) |
-| **Diagnostics** | 2 injectable DTCs on DM1 (PGN 65226): SPN 110/FMI 3, SPN 190/FMI 0 |
+| **Diagnostics** | Configurable DTCs · **DM1** (65226) cyclic + on request · **DM2** (65227) on request · **DM3** (65228) clear previously active · BAM when multi-DTC |
 | **UI** | CLI or NiceGUI (default `http://127.0.0.1:8080`) |
+
+Not a full J1939-73 suite (no DM4+). Demo presets remain SPN 110/FMI 3 (amber) and SPN 190/FMI 0 (red).
 
 ---
 
@@ -275,7 +277,9 @@ quit
 | `info` | Dump runtime config (`key=value`, handy for scripts/cloud) |
 | `get <key>` / `set <key> <value>` | Read / change an SPN |
 | `vin [value]` | Show or set VIN (rebroadcasts PGN 65260 if running) |
-| `dtc 1\|2\|both on\|off` | Inject / clear DM1 faults |
+| `dtc list` / `dtc on\|off <id>` | List / inject / heal DTCs (active → previously active) |
+| `dtc clear-active` / `clear-previous` / `clear-all` | Clear memories (previous = DM3 path) |
+| `dtc inject-demo` / `dtc 1\|2\|both on\|off` | Demo presets / legacy aliases |
 | `status` / `payloads` | Live stats / PGN hex |
 | `stop` / `start` / `reset` / `quit` | Session control |
 
@@ -312,7 +316,7 @@ Typical workflow:
 3. Click **START** — address claim + VIN broadcast begin with cyclic PGNs
 4. **Signals** tab — adjust SPNs live; search; edit `cycle_ms`
 5. **ECU & Vehicle (VIN)** tab — edit VIN, Copy, view NAME / SA (claim chip when online)
-6. **Diagnostics** tab — Inject / Clear the two DTCs (DM1 while running)
+6. **Diagnostics** tab — Inject demo faults, clear active / previously active (DM3); DM1 broadcasts while active
 7. Click **QUIT** when finished
 
 ### Bus modes
@@ -351,12 +355,36 @@ name = 0x0020000000000000
 vin = "1HTMMAAL7GH123456"
 
 [diagnostics]
-dtc_spn110_fmi3 = false   # SPN 110 / FMI 3 — amber warning
-dtc_spn190_fmi0 = false   # SPN 190 / FMI 0 — red stop
+dm1_cycle_ms = 1000
+# Legacy bools still accepted: dtc_spn110_fmi3 / dtc_spn190_fmi0
+
+[[diagnostics.dtc]]
+id = "coolant_volt_high"
+spn = 110
+fmi = 3
+lamp = "awl"              # pl | awl | rsl | mil
+active = false
+
+[[diagnostics.dtc]]
+id = "crank_overspeed"
+spn = 190
+fmi = 0
+lamp = "rsl"
+active = false
 
 # Optional [pgn.eec1], [pgn.ccvs], [pgn.fuel], [pgn.et1], [pgn.vd]
 # with enabled, cycle_ms, and SPN defaults — see examples/ecu.toml
 ```
+
+### Diagnostics (DM1 / DM2 / DM3)
+
+| Message | PGN | Behavior |
+|---------|-----|----------|
+| **DM1** | 65226 | Active DTCs + lamps · ~1 s cyclic while active · also on PGN Request · BAM if payload > 8 |
+| **DM2** | 65227 | Previously active DTCs · **on request only** |
+| **DM3** | 65228 | Request clears previously active memory (ACK) |
+
+Healing/clearing an active DTC moves it to previously active (occurrence count incremented). This is a practical subset of J1939-73 for lab/QA — not a certified full diagnostic stack.
 
 ---
 

@@ -7,7 +7,13 @@ from pathlib import Path
 import tomllib
 
 from j1939_emulator.bus.detect import EmulationMode
-from j1939_emulator.diagnostics import DiagnosticState
+from j1939_emulator.diagnostics import (
+    DM1_CYCLE_MS,
+    DiagnosticState,
+    DtcEntry,
+    DtcStatus,
+    normalize_lamp,
+)
 from j1939_emulator.ecu_identity import (
     DEFAULT_NAME,
     DEFAULT_SOURCE_ADDRESS,
@@ -126,7 +132,41 @@ def _load_identity(raw: dict) -> EcuIdentity:
 
 def _load_diagnostics(raw: dict) -> DiagnosticState:
     diag = raw.get("diagnostics", {}) or {}
+    cycle_ms = int(diag.get("dm1_cycle_ms", DM1_CYCLE_MS))
+
+    # New format: [[diagnostics.dtc]] array of tables
+    dtc_rows = diag.get("dtc")
+    if isinstance(dtc_rows, list) and dtc_rows:
+        entries: list[DtcEntry] = []
+        for i, row in enumerate(dtc_rows):
+            if not isinstance(row, dict):
+                raise ValueError(f"diagnostics.dtc[{i}] must be a table")
+            if "spn" not in row or "fmi" not in row:
+                raise ValueError(f"diagnostics.dtc[{i}] requires spn and fmi")
+            spn = int(row["spn"])
+            fmi = int(row["fmi"])
+            oc = int(row.get("oc", 0))
+            lamp = normalize_lamp(str(row.get("lamp", "awl")))
+            entry_id = str(row.get("id") or f"spn{spn}_fmi{fmi}")
+            label = str(row.get("label") or f"SPN {spn} / FMI {fmi}")
+            active = bool(row.get("active", False))
+            status = DtcStatus.ACTIVE if active else DtcStatus.INACTIVE
+            entries.append(
+                DtcEntry(
+                    id=entry_id,
+                    spn=spn,
+                    fmi=fmi,
+                    oc=oc,
+                    lamp=lamp,
+                    label=label,
+                    status=status,
+                )
+            )
+        return DiagnosticState(dtcs=entries, dm1_cycle_ms=cycle_ms)
+
+    # Legacy v1.0 bools (compat shim)
     return DiagnosticState(
+        dm1_cycle_ms=cycle_ms,
         dtc_spn110_fmi3=bool(
             diag.get(
                 "dtc_spn110_fmi3",

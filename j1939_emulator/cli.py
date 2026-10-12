@@ -134,7 +134,8 @@ payloads                 — current PGN hex
 get <key>                — read SPN (e.g. get eec1.spn190_rpm)
 set <key> <value>        — change SPN (e.g. set eec1.spn190_rpm 2100)
 vin [value]              — show or set 17-char VIN
-dtc 1|2|both on|off      — inject/clear DM1 faults
+dtc list|add|on|off|…    — DM1/DM2/DM3 diagnostics (see help)
+dtc 1|2|both on|off      — legacy demo inject/clear
 stop | start | reset | help | quit"""
 
 
@@ -264,9 +265,15 @@ def run_cli(args: argparse.Namespace) -> int:
                 break
             if not line:
                 continue
-            parts = line.split(maxsplit=2)
+            # Full split so "dtc add 91 3" keeps all tokens (maxsplit=2 broke this).
+            parts = line.split()
             cmd = parts[0].lower()
-            rest = parts[1:]
+            if cmd == "set" and len(parts) >= 3:
+                rest = [parts[1], " ".join(parts[2:])]
+            elif cmd == "vin" and len(parts) >= 2:
+                rest = [" ".join(parts[1:])]
+            else:
+                rest = parts[1:]
 
             if cmd in ("quit", "exit", "q"):
                 break
@@ -403,6 +410,8 @@ def run_cli(args: argparse.Namespace) -> int:
                     f"vin={session.identity.vin}\n"
                     f"dtc1={session.diagnostics.dtc_spn110_fmi3}\n"
                     f"dtc2={session.diagnostics.dtc_spn190_fmi0}\n"
+                    f"active_dtcs={st.active_dtcs}\n"
+                    f"previously_active_dtcs={st.previously_active_dtcs}\n"
                     f"tx={st.tx_count}\n"
                     f"load_pct={st.load_pct:.1f}"
                 )
@@ -415,7 +424,9 @@ def run_cli(args: argparse.Namespace) -> int:
                     f"running={st.running} claimed={st.address_claimed} "
                     f"uptime={mm:02d}:{ss:02d} tx={st.tx_count} "
                     f"load={st.load_pct:.1f}% bitrate={st.bitrate} "
-                    f"dtcs={st.active_dtcs} vin={session.identity.vin} "
+                    f"active_dtcs={st.active_dtcs} "
+                    f"prev_dtcs={st.previously_active_dtcs} "
+                    f"vin={session.identity.vin} "
                     f"channel={channel.label!r}"
                 )
                 continue
@@ -445,14 +456,102 @@ def run_cli(args: argparse.Namespace) -> int:
                     print(f"error: {exc}")
                 continue
             if cmd == "dtc":
-                if len(rest) < 2:
+                diag = session.diagnostics
+                if not rest or rest[0].lower() in ("help", "?"):
                     print(
-                        "usage: dtc <1|2|both> <on|off>\n"
-                        f"active: dtc1={session.diagnostics.dtc_spn110_fmi3} "
-                        f"dtc2={session.diagnostics.dtc_spn190_fmi0}"
+                        "dtc list\n"
+                        "dtc add <spn> <fmi> [oc]\n"
+                        "dtc on <id|spn> | dtc off <id|spn>\n"
+                        "dtc clear-active | dtc clear-previous | dtc clear-all\n"
+                        "dtc inject-demo\n"
+                        "dtc 1|2|both on|off   (legacy)\n"
+                        f"active={diag.active_count} "
+                        f"previously_active={diag.previously_active_count}"
                     )
                     continue
-                which, state_s = rest[0].lower(), rest[1].lower()
+                sub = rest[0].lower()
+                if sub == "list":
+                    for e in diag.list_dtcs():
+                        print(
+                            f"{e.id} spn={e.spn} fmi={e.fmi} oc={e.oc} "
+                            f"lamp={e.lamp} status={e.status.value}"
+                        )
+                    print(
+                        f"active={diag.active_count} "
+                        f"previously_active={diag.previously_active_count} "
+                        f"dm1={diag.dm1_broadcasting}"
+                    )
+                    continue
+                if sub == "add":
+                    if len(rest) < 3:
+                        print("usage: dtc add <spn> <fmi> [oc]")
+                        continue
+                    try:
+                        spn = int(rest[1], 0)
+                        fmi = int(rest[2], 0)
+                        oc = int(rest[3], 0) if len(rest) > 3 else 0
+                        session.add_dtc(spn, fmi, oc)
+                        entry = diag.find(f"spn{spn}_fmi{fmi}")
+                        print(
+                            f"ok added {entry.id if entry else spn} "
+                            f"spn={spn} fmi={fmi}"
+                        )
+                    except (ValueError, TypeError) as exc:
+                        print(f"error: {exc}")
+                    continue
+                if sub in ("on", "off"):
+                    if len(rest) < 2:
+                        print(f"usage: dtc {sub} <id|spn>")
+                        continue
+                    try:
+                        session.set_dtc(rest[1], sub == "on")
+                        e = diag.find(rest[1])
+                        print(
+                            f"ok {e.id if e else rest[1]} "
+                            f"active={diag.active_count} "
+                            f"prev={diag.previously_active_count}"
+                        )
+                    except KeyError as exc:
+                        print(f"error: {exc}")
+                    continue
+                if sub in ("clear-active", "clear_active"):
+                    session.clear_active_dtcs()
+                    print(
+                        f"ok active={diag.active_count} "
+                        f"prev={diag.previously_active_count}"
+                    )
+                    continue
+                if sub in (
+                    "clear-previous",
+                    "clear_previous",
+                    "clear-prev",
+                    "dm3",
+                ):
+                    session.clear_previously_active_dtcs()
+                    print(
+                        f"ok active={diag.active_count} "
+                        f"prev={diag.previously_active_count}"
+                    )
+                    continue
+                if sub in ("clear-all", "clear_all"):
+                    session.clear_all_dtcs()
+                    print(
+                        f"ok active={diag.active_count} "
+                        f"prev={diag.previously_active_count}"
+                    )
+                    continue
+                if sub in ("inject-demo", "inject_demo", "demo"):
+                    session.inject_demo_dtcs()
+                    print(
+                        f"ok dtc1={diag.dtc_spn110_fmi3} "
+                        f"dtc2={diag.dtc_spn190_fmi0}"
+                    )
+                    continue
+                # Legacy: dtc 1|2|both on|off
+                if len(rest) < 2:
+                    print("error: unknown dtc command; try dtc help")
+                    continue
+                which, state_s = sub, rest[1].lower()
                 active = state_s in ("on", "1", "true", "inject")
                 if state_s in ("off", "0", "false", "clear"):
                     active = False
@@ -467,13 +566,15 @@ def run_cli(args: argparse.Namespace) -> int:
                     if active:
                         session.inject_both_dtcs()
                     else:
-                        session.clear_all_dtcs()
+                        session.clear_active_dtcs()
                 else:
-                    print("error: which must be 1|2|both")
+                    print("error: unknown dtc command; try dtc help")
                     continue
                 print(
-                    f"ok dtc1={session.diagnostics.dtc_spn110_fmi3} "
-                    f"dtc2={session.diagnostics.dtc_spn190_fmi0}"
+                    f"ok dtc1={diag.dtc_spn110_fmi3} "
+                    f"dtc2={diag.dtc_spn190_fmi0} "
+                    f"active={diag.active_count} "
+                    f"prev={diag.previously_active_count}"
                 )
                 continue
             if cmd == "stop":

@@ -14,8 +14,26 @@ name = 0x0020000000000000
 vin = "1HTMMAAL7GH123456"
 
 [diagnostics]
-dtc_spn110_fmi3 = false
-dtc_spn190_fmi0 = false
+dm1_cycle_ms = 1000
+# Legacy bools still work: dtc_spn110_fmi3 / dtc_spn190_fmi0
+
+[[diagnostics.dtc]]
+id = "coolant_volt_high"
+spn = 110
+fmi = 3
+oc = 0
+lamp = "awl"              # pl | awl | rsl | mil
+label = "Engine Coolant Temp Voltage High"
+active = false
+
+[[diagnostics.dtc]]
+id = "crank_overspeed"
+spn = 190
+fmi = 0
+oc = 0
+lamp = "rsl"
+label = "Engine Crankshaft Overspeed"
+active = false
 
 [pgn.eec1]
 enabled = true
